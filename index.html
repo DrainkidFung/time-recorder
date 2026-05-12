@@ -1,0 +1,602 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>俱乐部战争能量统计器</title>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif;
+      background: linear-gradient(135deg, #0f0c29, #302b63, #24243e);
+      min-height: 100vh; color: #fff; padding: 12px;
+    }
+    .header { text-align: center; margin-bottom: 12px; }
+    .header h1 {
+      font-size: 1.4em;
+      background: linear-gradient(90deg, #f7971e, #ffd200);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+      margin-bottom: 6px;
+    }
+    .clock-box {
+      display: inline-block; background: rgba(255,255,255,0.08);
+      border: 1px solid rgba(255,200,0,0.3); border-radius: 10px;
+      padding: 5px 20px; margin-bottom: 6px;
+    }
+    .clock { font-size: 1.6em; font-weight: bold; color: #ffd200; letter-spacing: 2px; }
+    .clock-date { font-size: 0.75em; color: #aaa; }
+    .sync-status {
+      display: inline-block; margin-left: 10px; padding: 3px 10px;
+      border-radius: 12px; font-size: 0.72em; font-weight: bold;
+    }
+    .sync-status.online  { background: rgba(56,239,125,0.25); color: #38ef7d; border: 1px solid #38ef7d; }
+    .sync-status.local   { background: rgba(255,200,0,0.2);   color: #ffd200; border: 1px solid #ffd200; }
+    .sync-status.offline { background: rgba(255,80,80,0.2);   color: #ff9090; border: 1px solid #ff5050; }
+    .status-bar { display: flex; justify-content: center; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+    .status-pill {
+      background: rgba(255,255,255,0.08); border-radius: 18px;
+      padding: 4px 12px; font-size: 0.75em; border: 1px solid rgba(255,255,255,0.15);
+    }
+    .status-pill.active { background: rgba(255,80,80,0.25); border-color: #ff5050; color: #ff9090; animation: pulse 1.5s infinite; }
+    .status-pill.boost  { background: rgba(255,200,0,0.2);  border-color: #ffd200; color: #ffd200; animation: pulse 1.5s infinite; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.6} }
+    .war-end-countdown { text-align: center; margin-bottom: 6px; font-size: 0.8em; color: #ff9090; }
+    .war-end-countdown span { font-weight: bold; color: #ff5050; }
+    .boost-countdown { text-align: center; margin-bottom: 6px; font-size: 0.8em; color: #ffd200; display: none; }
+    .summary {
+      max-width: 1200px; margin: 0 auto 10px;
+      background: rgba(255,255,255,0.06); border-radius: 10px;
+      padding: 8px 16px; display: flex; gap: 18px; flex-wrap: wrap;
+      justify-content: center; border: 1px solid rgba(255,255,255,0.1);
+    }
+    .summary-item { text-align: center; }
+    .summary-item .val { font-size: 1.3em; font-weight: bold; color: #ffd200; }
+    .summary-item .lbl { font-size: 0.7em; color: #888; }
+    .controls { display: flex; justify-content: center; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+    .btn { padding: 6px 14px; border-radius: 7px; border: none; cursor: pointer; font-size: 0.78em; font-weight: bold; transition: all 0.2s; }
+    .btn-success { background: linear-gradient(90deg,#11998e,#38ef7d); color: #1a1a2e; }
+    .btn-danger  { background: linear-gradient(90deg,#ff416c,#ff4b2b); color: #fff; }
+    .btn-info    { background: linear-gradient(90deg,#4facfe,#00f2fe); color: #1a1a2e; }
+    .btn:hover { transform: translateY(-1px); }
+    .grid { display: grid; grid-template-columns: repeat(5,1fr); gap: 8px; max-width: 1200px; margin: 0 auto; }
+    @media (max-width: 900px) { .grid { grid-template-columns: repeat(3,1fr); } }
+    @media (max-width: 600px) { .grid { grid-template-columns: repeat(2,1fr); } }
+    .card {
+      background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 10px; padding: 8px 10px; transition: all 0.3s;
+    }
+    .card:hover { background: rgba(255,255,255,0.1); border-color: rgba(255,200,0,0.4); }
+    .card.full { border-color: rgba(56,239,125,0.5); background: rgba(56,239,125,0.07); }
+    .card.low  { border-color: rgba(255,65,108,0.5); background: rgba(255,65,108,0.07); }
+    .card.no-boost { opacity: 0.65; }
+    .card-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 4px; gap: 4px; }
+    .member-name { font-size: 0.8em; font-weight: bold; color: #fff; line-height: 1.3; flex: 1; word-break: break-all; }
+    .energy-display { font-size: 1.2em; font-weight: bold; color: #ffd200; white-space: nowrap; }
+    .energy-display .max { font-size: 0.55em; color: #888; }
+    .dots { display: flex; gap: 2px; flex-wrap: wrap; margin: 4px 0; }
+    .dot { width: 11px; height: 11px; border-radius: 50%; background: rgba(255,255,255,0.12); border: 1px solid rgba(255,255,255,0.18); }
+    .dot.filled { background: #ffd200; border-color: #f7971e; box-shadow: 0 0 4px rgba(255,210,0,0.5); }
+    .progress-bar { width: 100%; height: 5px; background: rgba(255,255,255,0.1); border-radius: 3px; margin: 4px 0; overflow: hidden; }
+    .progress-fill { height: 100%; transition: width 0.5s; background: linear-gradient(90deg,#11998e,#38ef7d); }
+    .progress-fill.mid      { background: linear-gradient(90deg,#f7971e,#ffd200); }
+    .progress-fill.low-bar  { background: linear-gradient(90deg,#ff416c,#ff4b2b); }
+    .progress-fill.full-bar { background: linear-gradient(90deg,#38ef7d,#00f260); }
+    .recover-info { font-size: 0.68em; color: #aaa; margin-top: 2px; min-height: 14px; line-height: 1.3; }
+    .recover-info .next-time    { color: #7ec8e3; font-weight: bold; }
+    .recover-info .boost-active { color: #ffd200; font-weight: bold; }
+    .boost-count {
+      display: flex; align-items: center; justify-content: space-between;
+      background: rgba(255,200,0,0.08); border: 1px solid rgba(255,200,0,0.2);
+      border-radius: 5px; padding: 3px 6px; margin-top: 5px; font-size: 0.72em;
+    }
+    .boost-count.depleted { background: rgba(255,80,80,0.1); border-color: rgba(255,80,80,0.3); }
+    .boost-count-label { color: #ffd200; font-weight: bold; }
+    .boost-count.depleted .boost-count-label { color: #ff9090; }
+    .boost-count-controls { display: flex; gap: 3px; align-items: center; }
+    .boost-btn {
+      width: 18px; height: 18px; border: none; border-radius: 4px;
+      background: rgba(255,255,255,0.15); color: #fff; cursor: pointer;
+      font-size: 0.85em; font-weight: bold; line-height: 1; padding: 0;
+    }
+    .boost-btn:hover { background: rgba(255,200,0,0.4); }
+    .boost-count-val { min-width: 26px; text-align: center; font-weight: bold; color: #fff; }
+    .card-footer { display: flex; gap: 4px; margin-top: 6px; }
+    .energy-input {
+      flex: 1; min-width: 0; padding: 3px 5px; border-radius: 4px;
+      border: 1px solid rgba(255,255,255,0.2); background: rgba(255,255,255,0.1);
+      color: #fff; font-size: 0.78em; text-align: center;
+    }
+    .energy-input:focus { outline: none; border-color: #ffd200; }
+    .use-btn   { padding: 3px 8px; border-radius: 4px; border: none; background: linear-gradient(90deg,#ff416c,#ff4b2b); color: #fff; font-size: 0.72em; cursor: pointer; font-weight: bold; }
+    .reset-btn { padding: 3px 7px; border-radius: 4px; border: none; background: rgba(255,255,255,0.1); color: #ccc; font-size: 0.72em; cursor: pointer; }
+    .toast {
+      position: fixed; top: 16px; right: 16px;
+      background: rgba(56,239,125,0.92); color: #1a1a2e;
+      padding: 9px 16px; border-radius: 9px; font-weight: bold; font-size: 0.85em;
+      z-index: 999; opacity: 0; transform: translateX(50px); transition: all 0.3s;
+      pointer-events: none; max-width: 260px;
+    }
+    .toast.show { opacity: 1; transform: translateX(0); }
+    .toast.error { background: rgba(255,65,108,0.92); color: #fff; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>⚔️ 俱乐部战争能量统计器</h1>
+    <div>
+      <div class="clock-box">
+        <div class="clock" id="clock">--:--:--</div>
+        <div class="clock-date" id="clock-date">北京时间</div>
+      </div>
+      <span class="sync-status local" id="sync-status">⏳ 连接中...</span>
+    </div>
+  </div>
+  <div class="status-bar">
+    <div class="status-pill" id="status-normal">⚡ 正常恢复：每3分钟 +1</div>
+    <div class="status-pill" id="status-boost">🚀 加速时段：每1分钟 +1</div>
+  </div>
+  <div class="war-end-countdown">⏳ 战争结束倒计时：<span id="war-countdown">计算中...</span></div>
+  <div class="boost-countdown" id="boost-cd">🚀 加速时段倒计时：<span id="boost-countdown-val"></span></div>
+  <div class="summary">
+    <div class="summary-item"><div class="val" id="s-total">0</div><div class="lbl">总能量</div></div>
+    <div class="summary-item"><div class="val" id="s-full">0</div><div class="lbl">满能量人数</div></div>
+    <div class="summary-item"><div class="val" id="s-avg">0</div><div class="lbl">平均能量</div></div>
+    <div class="summary-item"><div class="val" id="s-boost-total">0</div><div class="lbl">剩余加成总数</div></div>
+    <div class="summary-item"><div class="val" id="s-boost-avg">0</div><div class="lbl">人均剩余加成</div></div>
+  </div>
+  <div class="controls">
+    <button class="btn btn-success" onclick="resetAll()">🔄 全部满能量</button>
+    <button class="btn btn-info"    onclick="resetAllBoosts()">⭐ 加成全部重置30</button>
+    <button class="btn btn-danger"  onclick="clearAll()">🗑️ 全部清零</button>
+  </div>
+  <div class="grid" id="grid"></div>
+  <div class="toast" id="toast"></div>
+
+  <script>
+    // ═══════════════════════════════════════════════
+    // Firebase 配置（已填入你的项目配置）
+    // ═══════════════════════════════════════════════
+    const FIREBASE_CONFIG = {
+      apiKey: "AIzaSyBqb02AA5tR9yPkHMR4go2YGRuhRuH5QYU",
+      authDomain: "time-recorder-72d25.firebaseapp.com",
+      databaseURL: "https://time-recorder-72d25-default-rtdb.firebaseio.com",
+      projectId: "time-recorder-72d25",
+      storageBucket: "time-recorder-72d25.firebasestorage.app",
+      messagingSenderId: "462403787154",
+      appId: "1:462403787154:web:080de3ccf476b84333894b"
+    };
+    const ROOM_ID = "clubwar-room-1";
+
+    // ═══════════════════════════════════════════════
+    const MEMBERS = [
+      "快乐港湾","茶白（禁货架）","F-Core","浅梦吟风","小熊市",
+      "胡图图","辣椒蟹","银河落九天6","茶白","陆川县",
+      "疏影","银河落九天","开摆","玉林市","亚索之家",
+      "浪漫之都","晚安","灰太狼城堡","与时2026","唐顿庄园",
+      "希望之都","小鹿 禁","早安","塔尔城","Chase"
+    ];
+    const MAX_ENERGY = 12;
+    const MAX_BOOST  = 30;
+    const NORMAL_MS  = 3 * 60 * 1000;
+    const BOOST_MS   = 1 * 60 * 1000;
+
+    // 战争时间（固定为明天）
+    function getTomorrowHour(h) {
+      const t = new Date();
+      t.setDate(t.getDate() + 1);
+      t.setHours(h, 0, 0, 0);
+      return t.getTime();
+    }
+    const WAR_END     = getTomorrowHour(19);
+    const BOOST_START = getTomorrowHour(17);
+    const BOOST_END   = WAR_END;
+
+    function currentRate() {
+      const now = Date.now();
+      return (now >= BOOST_START && now < BOOST_END) ? BOOST_MS : NORMAL_MS;
+    }
+
+    // ─────────────────────────────────────────────
+    // state[m] = { energy, nextTickAt, boosts }
+    //
+    // nextTickAt：该成员下次恢复1点的绝对时间戳
+    //   → 每人独立，互不干扰
+    //   → 使用能量时 nextTickAt 不变（倒计时连续）
+    //   → 只有从"满能量"首次扣减时才设置新 nextTickAt
+    // ─────────────────────────────────────────────
+    let state = {};
+    MEMBERS.forEach(m => {
+      state[m] = { energy: MAX_ENERGY, nextTickAt: 0, boosts: MAX_BOOST };
+    });
+
+    // 推算当前真实能量（不修改 state）
+    function calcMember(m) {
+      const s = state[m] || { energy: MAX_ENERGY, nextTickAt: 0, boosts: MAX_BOOST };
+      let energy = s.energy;
+      let nextAt = s.nextTickAt || 0;
+
+      if (energy >= MAX_ENERGY) return { energy: MAX_ENERGY, nextTickAt: 0 };
+
+      const now  = Date.now();
+      const rate = currentRate();
+
+      // nextTickAt 无效时重新初始化
+      if (!nextAt || nextAt > now + rate * 13) {
+        nextAt = now + rate;
+      }
+
+      // 把所有已到期的 tick 累加到 energy
+      while (nextAt <= now && energy < MAX_ENERGY) {
+        energy++;
+        nextAt += rate;
+      }
+
+      if (energy >= MAX_ENERGY) nextAt = 0;
+
+      return { energy, nextTickAt: nextAt };
+    }
+
+    function formatCountdown(ms) {
+      if (ms <= 0) return '0秒';
+      const s = Math.floor(ms / 1000);
+      const m = Math.floor(s / 60);
+      return m > 0 ? `${m}分${(s % 60).toString().padStart(2,'0')}秒` : `${s}秒`;
+    }
+    function formatDuration(ms) {
+      if (ms <= 0) return '已结束';
+      const s   = Math.floor(ms / 1000);
+      const h   = Math.floor(s / 3600);
+      const m   = Math.floor((s % 3600) / 60);
+      const sec = s % 60;
+      if (h > 0) return `${h}小时${m}分${sec}秒`;
+      if (m > 0) return `${m}分${sec}秒`;
+      return `${sec}秒`;
+    }
+
+    // ═══════════════════════════════════════════════
+    // Firebase 同步层
+    // ═══════════════════════════════════════════════
+    let db = null;
+    let stateRef = null;
+    let isRemoteUpdate = false;
+
+    function setSyncStatus(mode, text) {
+      const el = document.getElementById('sync-status');
+      el.className = 'sync-status ' + mode;
+      el.textContent = text;
+    }
+
+    function initFirebase() {
+      try {
+        firebase.initializeApp(FIREBASE_CONFIG);
+        db = firebase.database();
+        stateRef = db.ref('rooms/' + ROOM_ID + '/state');
+
+        stateRef.on('value', (snap) => {
+          const data = snap.val();
+          isRemoteUpdate = true;
+          if (data) {
+            MEMBERS.forEach(m => {
+              if (data[m]) state[m] = data[m];
+            });
+          } else {
+            // 数据库为空，写入初始状态
+            stateRef.set(state);
+          }
+          isRemoteUpdate = false;
+          tick();
+          setSyncStatus('online', '☁️ 实时同步中');
+        }, (err) => {
+          console.error('Firebase error:', err);
+          setSyncStatus('offline', '⚠️ 同步失败');
+        });
+
+        db.ref('.info/connected').on('value', (snap) => {
+          if (snap.val()) {
+            setSyncStatus('online', '☁️ 实时同步中');
+          } else {
+            setSyncStatus('offline', '⚠️ 网络断开');
+          }
+        });
+
+      } catch(e) {
+        console.error(e);
+        setSyncStatus('offline', '⚠️ 初始化失败');
+      }
+    }
+
+    // 保存单个成员数据到 Firebase
+    function saveMember(member) {
+      if (stateRef && !isRemoteUpdate) {
+        stateRef.child(encodeFirebaseKey(member)).set(state[member]);
+      }
+    }
+
+    // 保存全部数据
+    function saveAll() {
+      if (stateRef && !isRemoteUpdate) {
+        const encoded = {};
+        MEMBERS.forEach(m => { encoded[encodeFirebaseKey(m)] = state[m]; });
+        stateRef.set(encoded);
+      }
+    }
+
+    // Firebase key 不能含 . # $ [ ] /，用 encodeURIComponent 处理
+    function encodeFirebaseKey(key) {
+      return encodeURIComponent(key).replace(/\./g, '%2E');
+    }
+
+    // ═══════════════════════════════════════════════
+    // 渲染
+    // ═══════════════════════════════════════════════
+    function buildGrid() {
+      const grid = document.getElementById('grid');
+      grid.innerHTML = '';
+      MEMBERS.forEach(m => {
+        const key  = encodeURIComponent(m);
+        const safe = m.replace(/\\/g,'\\\\').replace(/'/g,"\\'");
+        const card = document.createElement('div');
+        card.className = 'card';
+        card.id = 'card-' + key;
+        card.innerHTML = `
+          <div class="card-header">
+            <div class="member-name">${m}</div>
+            <div class="energy-display">
+              <span id="en-${key}">12</span><span class="max">/${MAX_ENERGY}</span>
+            </div>
+          </div>
+          <div class="dots" id="dots-${key}"></div>
+          <div class="progress-bar">
+            <div class="progress-fill" id="prog-${key}" style="width:100%"></div>
+          </div>
+          <div class="recover-info" id="rec-${key}">✅ 能量已满</div>
+          <div class="boost-count" id="bc-${key}">
+            <span class="boost-count-label">⭐ 剩余加成</span>
+            <div class="boost-count-controls">
+              <button class="boost-btn" onclick="changeBoost('${safe}',-1)">−</button>
+              <span class="boost-count-val" id="bv-${key}">30</span>
+              <span style="opacity:0.5;font-size:0.85em">/${MAX_BOOST}</span>
+              <button class="boost-btn" onclick="changeBoost('${safe}',1)">+</button>
+            </div>
+          </div>
+          <div class="card-footer">
+            <input type="number" class="energy-input" id="inp-${key}"
+              min="0" max="${MAX_ENERGY}" placeholder="消耗能量"
+              onkeydown="if(event.key==='Enter') useEnergy('${safe}')">
+            <button class="use-btn"   onclick="useEnergy('${safe}')">使用</button>
+            <button class="reset-btn" onclick="resetMember('${safe}')">满</button>
+          </div>
+        `;
+        grid.appendChild(card);
+      });
+    }
+
+    function updateCard(m) {
+      const key = encodeURIComponent(m);
+      const { energy, nextTickAt } = calcMember(m);
+      const pct    = (energy / MAX_ENERGY) * 100;
+      const boosts = state[m] ? (state[m].boosts ?? MAX_BOOST) : MAX_BOOST;
+
+      document.getElementById('en-' + key).textContent = energy;
+
+      const prog = document.getElementById('prog-' + key);
+      prog.style.width = pct + '%';
+      prog.className = 'progress-fill';
+      if      (energy >= MAX_ENERGY) prog.classList.add('full-bar');
+      else if (pct <= 33)            prog.classList.add('low-bar');
+      else if (pct <= 66)            prog.classList.add('mid');
+
+      const dotsEl = document.getElementById('dots-' + key);
+      dotsEl.innerHTML = '';
+      for (let i = 0; i < MAX_ENERGY; i++) {
+        const d = document.createElement('div');
+        d.className = 'dot' + (i < energy ? ' filled' : '');
+        dotsEl.appendChild(d);
+      }
+
+      const card = document.getElementById('card-' + key);
+      card.className = 'card';
+      if      (energy >= MAX_ENERGY) card.classList.add('full');
+      else if (energy <= 3)          card.classList.add('low');
+      if (boosts <= 0)               card.classList.add('no-boost');
+
+      // 倒计时（直接用该成员独立的 nextTickAt）
+      const recEl = document.getElementById('rec-' + key);
+      if (energy >= MAX_ENERGY) {
+        recEl.innerHTML = '✅ 能量已满';
+      } else if (Date.now() >= WAR_END) {
+        recEl.innerHTML = '⏹️ 战争已结束';
+      } else {
+        const msLeft  = nextTickAt - Date.now();
+        const isBoost = Date.now() >= BOOST_START && Date.now() < BOOST_END;
+        if (isBoost) {
+          recEl.innerHTML = `<span class="boost-active">🚀 加速中！</span> 下一点：<span class="next-time">${formatCountdown(msLeft)}</span>`;
+        } else {
+          recEl.innerHTML = `⏱️ 下一点：<span class="next-time">${formatCountdown(msLeft)}</span>`;
+        }
+      }
+
+      // 加成
+      const bv = document.getElementById('bv-' + key);
+      const bc = document.getElementById('bc-' + key);
+      if (bv) bv.textContent = boosts;
+      if (bc) bc.className = 'boost-count' + (boosts <= 0 ? ' depleted' : '');
+    }
+
+    function updateSummary() {
+      let total = 0, full = 0, boostTotal = 0;
+      MEMBERS.forEach(m => {
+        const { energy } = calcMember(m);
+        total += energy;
+        if (energy >= MAX_ENERGY) full++;
+        boostTotal += state[m] ? (state[m].boosts ?? MAX_BOOST) : MAX_BOOST;
+      });
+      document.getElementById('s-total').textContent       = total;
+      document.getElementById('s-full').textContent        = full;
+      document.getElementById('s-avg').textContent         = (total / MEMBERS.length).toFixed(1);
+      document.getElementById('s-boost-total').textContent = boostTotal;
+      document.getElementById('s-boost-avg').textContent   = (boostTotal / MEMBERS.length).toFixed(1);
+    }
+
+    function updateClock() {
+      const now = new Date();
+      const pad = n => n.toString().padStart(2,'0');
+      document.getElementById('clock').textContent =
+        `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+      const days = ['日','一','二','三','四','五','六'];
+      document.getElementById('clock-date').textContent =
+        `北京时间 ${now.getFullYear()}年${now.getMonth()+1}月${now.getDate()}日 周${days[now.getDay()]}`;
+
+      const diff = WAR_END - Date.now();
+      document.getElementById('war-countdown').textContent =
+        diff <= 0 ? '战争已结束！' : formatDuration(diff);
+
+      const ts = Date.now();
+      const sn = document.getElementById('status-normal');
+      const sb = document.getElementById('status-boost');
+      const bc = document.getElementById('boost-cd');
+      if (ts >= BOOST_START && ts < BOOST_END) {
+        sn.className = 'status-pill';
+        sb.className = 'status-pill boost';
+        sb.textContent = '🚀 加速时段进行中！每1分钟 +1';
+        bc.style.display = 'none';
+      } else if (ts < BOOST_START) {
+        sn.className = 'status-pill active';
+        sb.className = 'status-pill';
+        sb.textContent = '🚀 加速时段：每1分钟 +1';
+        bc.style.display = 'block';
+        document.getElementById('boost-countdown-val').textContent =
+          formatDuration(BOOST_START - ts) + '后开始';
+      } else {
+        sn.className = 'status-pill';
+        sb.className = 'status-pill';
+        bc.style.display = 'none';
+      }
+    }
+
+    // ═══════════════════════════════════════════════
+    // 操作
+    // ═══════════════════════════════════════════════
+    function useEnergy(member) {
+      const key = encodeURIComponent(member);
+      const inp = document.getElementById('inp-' + key);
+      const val = parseInt(inp.value);
+      if (isNaN(val) || val < 0) { showToast('请输入有效的消耗量！', true); return; }
+
+      const { energy: current, nextTickAt } = calcMember(member);
+      if (val > current) { showToast(`${member} 能量不足！当前：${current}`, true); return; }
+
+      const newEnergy = current - val;
+      const now       = Date.now();
+      const rate      = currentRate();
+
+      // ✅ 关键逻辑：
+      // - 之前是满能量 → 现在首次扣减，设置新的 nextTickAt = now + rate
+      // - 之前已在恢复中 → 保留 nextTickAt 不变（倒计时连续，不重置）
+      let newNextAt;
+      if (!state[member] || state[member].energy >= MAX_ENERGY) {
+        newNextAt = now + rate;
+      } else {
+        newNextAt = nextTickAt; // 保留原倒计时进度
+      }
+
+      state[member] = {
+        energy:    newEnergy,
+        nextTickAt: newEnergy >= MAX_ENERGY ? 0 : newNextAt,
+        boosts:    state[member] ? (state[member].boosts ?? MAX_BOOST) : MAX_BOOST
+      };
+
+      saveMember(member);
+      inp.value = '';
+      updateCard(member);
+      updateSummary();
+      showToast(`${member} 使用 ${val} 点，剩余 ${newEnergy} 点`);
+    }
+
+    function changeBoost(member, delta) {
+      if (!state[member]) return;
+      const cur  = state[member].boosts ?? MAX_BOOST;
+      const next = Math.max(0, Math.min(MAX_BOOST, cur + delta));
+      if (next === cur) return;
+      state[member].boosts = next;
+      saveMember(member);
+      updateCard(member);
+      updateSummary();
+    }
+
+    function resetMember(member) {
+      state[member] = {
+        energy:    MAX_ENERGY,
+        nextTickAt: 0,
+        boosts:    state[member] ? (state[member].boosts ?? MAX_BOOST) : MAX_BOOST
+      };
+      saveMember(member);
+      updateCard(member);
+      updateSummary();
+      showToast(`${member} 已满能量`);
+    }
+
+    function resetAll() {
+      MEMBERS.forEach(m => {
+        state[m] = {
+          energy:    MAX_ENERGY,
+          nextTickAt: 0,
+          boosts:    state[m] ? (state[m].boosts ?? MAX_BOOST) : MAX_BOOST
+        };
+      });
+      saveAll();
+      MEMBERS.forEach(m => updateCard(m));
+      updateSummary();
+      showToast('所有成员能量已重置为满！');
+    }
+
+    function resetAllBoosts() {
+      if (!confirm('确定将所有人加成次数重置为 30？')) return;
+      MEMBERS.forEach(m => {
+        if (state[m]) state[m].boosts = MAX_BOOST;
+      });
+      saveAll();
+      MEMBERS.forEach(m => updateCard(m));
+      updateSummary();
+      showToast('所有加成次数已重置为 30');
+    }
+
+    function clearAll() {
+      if (!confirm('确定要将所有人能量清零吗？')) return;
+      const now  = Date.now();
+      const rate = currentRate();
+      MEMBERS.forEach((m, i) => {
+        state[m] = {
+          energy:    0,
+          nextTickAt: now + rate + i * 1000, // 每人偏移1秒，确保独立
+          boosts:    state[m] ? (state[m].boosts ?? MAX_BOOST) : MAX_BOOST
+        };
+      });
+      saveAll();
+      MEMBERS.forEach(m => updateCard(m));
+      updateSummary();
+      showToast('所有成员能量已清零', true);
+    }
+
+    function showToast(msg, isError=false) {
+      const t = document.getElementById('toast');
+      t.textContent = msg;
+      t.className = 'toast show' + (isError ? ' error' : '');
+      setTimeout(() => { t.className = 'toast'; }, 2500);
+    }
+
+    function tick() {
+      updateClock();
+      MEMBERS.forEach(m => updateCard(m));
+      updateSummary();
+    }
+
+    buildGrid();
+    initFirebase();
+    tick();
+    setInterval(tick, 1000);
+  </script>
+</body>
+</html>
